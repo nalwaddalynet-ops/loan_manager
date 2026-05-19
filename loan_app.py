@@ -7,6 +7,12 @@ from fpdf import FPDF
 conn = sqlite3.connect('loans.db', check_same_thread=False)
 c = conn.cursor()
 
+# Schema
+c.execute("PRAGMA table_info(loans)")
+cols = [col[1] for col in c.fetchall()]
+if 'frozen_balance' not in cols:
+    c.execute("ALTER TABLE loans ADD COLUMN frozen_balance REAL DEFAULT 0")
+
 c.execute('''CREATE TABLE IF NOT EXISTS loans (
              id INTEGER PRIMARY KEY, borrower_name TEXT, phone TEXT, amount REAL,
              interest_rate REAL, term_months INTEGER, total_repayment REAL,
@@ -30,15 +36,15 @@ def calculate_penalty(due_date_str, balance, frozen):
     except:
         return 0
 
-# ====================== LOGIN ======================
+# Login
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
 
 if not st.session_state.logged_in:
     st.title("🔐 PROSPER MACRO SOLUTIONS LTD")
     st.subheader("Login")
-    username = st.text_input("Username", key="login_user")
-    password = st.text_input("Password", type="password", key="login_pass")
+    username = st.text_input("Username", key="l_user")
+    password = st.text_input("Password", type="password", key="l_pass")
     if st.button("Login"):
         if username == "admin" and password == "123456":
             st.session_state.logged_in = True
@@ -70,14 +76,14 @@ with tab2:
     st.subheader("New Loan")
     col1, col2 = st.columns(2)
     with col1:
-        name = st.text_input("Borrower Name*", key="new_name")
-        phone = st.text_input("Phone Number*", key="new_phone")
-        amount = st.number_input("Loan Amount", min_value=10000, value=100000, key="new_amount")
-        officer = st.text_input("Staff Responsible", value="Not Assigned", key="new_officer")
+        name = st.text_input("Borrower Name*", key="n_name")
+        phone = st.text_input("Phone Number*", key="n_phone")
+        amount = st.number_input("Loan Amount", min_value=10000, value=100000, key="n_amount")
+        officer = st.text_input("Staff Responsible", value="Not Assigned", key="n_officer")
     with col2:
-        rate = st.number_input("Interest Rate (%)", value=14.0, key="new_rate")
-        months = st.number_input("Term (Months)", min_value=1, value=1, key="new_months")
-        disb_date = st.date_input("Disbursement Date", datetime(2026, 1, 15), key="new_disb")
+        rate = st.number_input("Interest Rate (%)", value=14.0, key="n_rate")
+        months = st.number_input("Term (Months)", min_value=1, value=1, key="n_months")
+        disb_date = st.date_input("Disbursement Date", datetime(2026, 1, 15), key="n_disb")
     
     if st.button("Save New Loan", type="primary"):
         if name and phone:
@@ -86,14 +92,12 @@ with tab2:
             c.execute("""INSERT INTO loans (borrower_name, phone, amount, interest_rate, term_months, total_repayment, disbursement_date, due_date, loan_officer)
                          VALUES (?,?,?,?,?,?,?,?,?)""", (name, phone, amount, rate, months, total, str(disb_date), str(due_date), officer))
             conn.commit()
-            st.success(f"Loan for {name} saved!")
+            st.success(f"Loan saved for {name}!")
             st.rerun()
-        else:
-            st.error("Name and Phone required")
 
 with tab3:
     st.subheader("Loans Portfolio")
-    search = st.text_input("Search Borrower", key="search1")
+    search = st.text_input("Search Borrower", key="search")
     df = pd.read_sql_query("SELECT * FROM loans ORDER BY id ASC", conn)
     if not df.empty:
         if search:
@@ -107,47 +111,48 @@ with tab3:
     st.subheader("Manage Loan")
     manage_id = st.number_input("Loan ID", min_value=1, key="manage_id")
 
-    if st.button("✏️ Edit Loan"):
-        loan_data = pd.read_sql_query("SELECT * FROM loans WHERE id=?", conn, params=(manage_id,))
-        if not loan_data.empty:
-            st.session_state.edit_loan = loan_data.iloc[0]
-            st.success("Loan loaded below")
-    
-    if st.button("❄️ Freeze / Unfreeze"):
-        c.execute("UPDATE loans SET frozen = NOT frozen WHERE id=?", (manage_id,))
-        conn.commit()
-        st.success("Status updated!")
-        st.rerun()
-
-    if st.button("🗑️ Delete Loan", type="secondary"):
-        if st.checkbox("Confirm Delete?"):
-            c.execute("DELETE FROM loans WHERE id=?", (manage_id,))
-            c.execute("DELETE FROM payments WHERE loan_id=?", (manage_id,))
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if st.button("✏️ Load for Edit"):
+            data = pd.read_sql_query("SELECT * FROM loans WHERE id=?", conn, params=(manage_id,))
+            if not data.empty:
+                st.session_state.edit_loan = data.iloc[0]
+                st.success("Loaded! Scroll down")
+    with col2:
+        if st.button("❄️ Freeze/Unfreeze"):
+            c.execute("UPDATE loans SET frozen = NOT frozen WHERE id=?", (manage_id,))
             conn.commit()
-            st.success("Deleted!")
+            st.success("Done!")
             st.rerun()
+    with col3:
+        if st.button("🗑️ Delete", type="secondary"):
+            if st.checkbox("Confirm?"):
+                c.execute("DELETE FROM loans WHERE id=?", (manage_id,))
+                c.execute("DELETE FROM payments WHERE loan_id=?", (manage_id,))
+                conn.commit()
+                st.success("Deleted!")
+                st.rerun()
 
-    # Edit Form
     if 'edit_loan' in st.session_state:
         loan = st.session_state.edit_loan
-        st.write(f"**Editing Loan ID: {loan['id']}**")
+        st.write(f"**Editing Loan {loan['id']}**")
         col_a, col_b = st.columns(2)
         with col_a:
             new_name = st.text_input("Name", loan['borrower_name'], key="e_name")
             new_phone = st.text_input("Phone", loan['phone'], key="e_phone")
             new_amount = st.number_input("Amount", value=float(loan['amount']), key="e_amount")
-            new_officer = st.text_input("Officer", loan['loan_officer'], key="e_officer")
         with col_b:
-            new_rate = st.number_input("Rate (%)", value=float(loan['interest_rate']), key="e_rate")
+            new_rate = st.number_input("Rate", value=float(loan['interest_rate']), key="e_rate")
             new_months = st.number_input("Months", value=int(loan['term_months']), key="e_months")
-            new_disb = st.date_input("Disbursement Date", datetime.strptime(loan['disbursement_date'], '%Y-%m-%d'), key="e_disb")
+            new_disb = st.date_input("Disb Date", datetime.strptime(loan['disbursement_date'], '%Y-%m-%d'), key="e_disb")
         if st.button("Save Changes"):
             new_total = new_amount + (new_amount * new_rate / 100 * new_months)
             new_due = new_disb + timedelta(days=30 * new_months)
-            c.execute("""UPDATE loans SET borrower_name=?, phone=?, amount=?, interest_rate=?, term_months=?, total_repayment=?, disbursement_date=?, due_date=?, loan_officer=? WHERE id=?""",
-                      (new_name, new_phone, new_amount, new_rate, new_months, new_total, str(new_disb), str(new_due), new_officer, loan['id']))
+            c.execute("""UPDATE loans SET borrower_name=?, phone=?, amount=?, interest_rate=?, term_months=?, 
+                         total_repayment=?, disbursement_date=?, due_date=? WHERE id=?""",
+                      (new_name, new_phone, new_amount, new_rate, new_months, new_total, str(new_disb), str(new_due), loan['id']))
             conn.commit()
-            st.success("Updated successfully!")
+            st.success("Loan Updated!")
             del st.session_state.edit_loan
             st.rerun()
 
@@ -155,17 +160,17 @@ with tab4:
     st.subheader("Record Payment")
     loan_id = st.number_input("Loan ID", min_value=1, key="pay_id")
     pay_amount = st.number_input("Amount", min_value=1000, key="pay_amt")
-    pay_date = st.date_input("Payment Date", datetime.now().date(), key="pay_date")
-    if st.button("Record Payment", type="primary"):
+    pay_date = st.date_input("Date", datetime.now().date(), key="pay_date")
+    if st.button("Record Payment"):
         c.execute("SELECT id FROM loans WHERE id=?", (loan_id,))
         if c.fetchone():
-            date_str = pay_date.strftime('%Y-%m-%d')
-            c.execute("INSERT INTO payments (loan_id, amount, payment_date) VALUES (?,?,?)", (loan_id, pay_amount, date_str))
+            dstr = pay_date.strftime('%Y-%m-%d')
+            c.execute("INSERT INTO payments (loan_id, amount, payment_date) VALUES (?,?,?)", (loan_id, pay_amount, dstr))
             c.execute("UPDATE loans SET amount_paid = amount_paid + ? WHERE id=?", (pay_amount, loan_id))
             conn.commit()
             st.success("Payment recorded!")
         else:
-            st.error("Loan ID not found")
+            st.error("Loan not found")
 
 with tab5:
     st.subheader("Client Statement")
@@ -186,17 +191,16 @@ with tab5:
             pdf.cell(0, 10, f"Principal: UGX {loan['amount']:,.0f}", ln=True)
             pdf.cell(0, 10, f"Total Due: UGX {loan['total_repayment']:,.0f}", ln=True)
             pdf.ln(10)
-            pdf.cell(0, 10, "Payments:", ln=True)
             for _, p in payments.iterrows():
                 pdf.cell(0, 10, f"{p['payment_date']} - UGX {p['amount']:,.0f}", ln=True)
             pdf_output = f"Statement_{stmt_id}.pdf"
             pdf.output(pdf_output)
             with open(pdf_output, "rb") as f:
-                st.download_button("Download PDF", f, file_name=pdf_output, mime="application/pdf")
+                st.download_button("Download", f, file_name=pdf_output, mime="application/pdf")
         except:
             st.error("Loan not found")
 
-st.sidebar.success("Logged in as Admin")
+st.sidebar.success("Logged in")
 if st.sidebar.button("Logout"):
     st.session_state.logged_in = False
     st.rerun()
