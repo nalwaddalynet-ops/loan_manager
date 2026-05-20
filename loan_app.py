@@ -42,6 +42,13 @@ def calculate_penalty(due_date_str, balance, frozen, is_balance_frozen):
     except:
         return 0
 
+def get_loan_status(balance, penalty):
+    if balance <= 0:
+        return "✅ Fully Paid"
+    if penalty > 0:
+        return "⚠️ Overdue"
+    return "Active"
+
 # ====================== LOGIN ======================
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
@@ -78,7 +85,6 @@ with tab1:
     if not df.empty:
         df['balance'] = df.apply(lambda x: calculate_balance(x['total_repayment'], x['amount_paid']), axis=1)
         df['penalty'] = df.apply(lambda x: calculate_penalty(x['due_date'], x['balance'], x['frozen'], x.get('is_balance_frozen', 0)), axis=1)
-        
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("Total Disbursed", f"UGX {df['amount'].sum():,.0f}")
         col2.metric("Outstanding", f"UGX {df['balance'].sum():,.0f}")
@@ -112,7 +118,7 @@ with tab2:
             st.success(f"✅ Loan for **{name}** created!")
             st.rerun()
 
-# ====================== PORTFOLIO (Full Detailed View) ======================
+# ====================== PORTFOLIO ======================
 with tab3:
     st.subheader("Loans Portfolio")
     df = pd.read_sql_query("SELECT * FROM loans ORDER BY id ASC", conn)
@@ -121,17 +127,20 @@ with tab3:
         df['balance'] = df.apply(lambda x: calculate_balance(x['total_repayment'], x['amount_paid']), axis=1)
         df['penalty'] = df.apply(lambda x: calculate_penalty(x['due_date'], x['balance'], x['frozen'], x.get('is_balance_frozen', 0)), axis=1)
         df['total_due'] = df['balance'] + df['penalty']
+        df['status'] = df.apply(lambda x: get_loan_status(x['balance'], x['penalty']), axis=1)
+        
+        # Export Button at Top
+        col_exp1, col_exp2 = st.columns([1, 4])
+        with col_exp1:
+            if st.button("📥 Export to Excel"):
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                    df.to_excel(writer, index=False)
+                output.seek(0)
+                st.download_button("⬇️ Download Portfolio", output, "portfolio.xlsx", 
+                                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="exp_port")
         
         st.dataframe(df, use_container_width=True, hide_index=True)
-        
-        # Export Button
-        if st.button("📥 Export Portfolio to Excel"):
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                df.to_excel(writer, index=False)
-            output.seek(0)
-            st.download_button("⬇️ Download Full Portfolio", output, "full_portfolio.xlsx", 
-                             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     else:
         st.info("No loans found.")
 
@@ -157,7 +166,7 @@ with tab4:
         else:
             st.error("Loan ID not found")
 
-# ====================== REPORTS (Clean Summary View) ======================
+# ====================== REPORTS ======================
 with tab5:
     st.subheader("Reports & Statements")
     report_type = st.selectbox("Select Report", ["Portfolio Summary", "Overdue Loans", "Loan Statement"])
@@ -171,7 +180,6 @@ with tab5:
                 st.dataframe(loan, hide_index=True)
                 st.subheader("Payment History")
                 st.dataframe(payments, hide_index=True)
-    
     elif report_type == "Overdue Loans":
         df = pd.read_sql_query("SELECT * FROM loans", conn)
         if not df.empty:
@@ -182,44 +190,45 @@ with tab5:
                 st.dataframe(overdue, use_container_width=True, hide_index=True)
             else:
                 st.success("🎉 No overdue loans at the moment!")
-    else:  # Portfolio Summary - Clean View
+    else:
         df = pd.read_sql_query("SELECT * FROM loans", conn)
         if not df.empty:
             df['balance'] = df.apply(lambda x: calculate_balance(x['total_repayment'], x['amount_paid']), axis=1)
             df['penalty'] = df.apply(lambda x: calculate_penalty(x['due_date'], x['balance'], x['frozen'], x.get('is_balance_frozen', 0)), axis=1)
             df['total_due'] = df['balance'] + df['penalty']
             
-            display_cols = ['id', 'borrower_name', 'phone', 'amount', 'balance', 'penalty', 'total_due', 'loan_officer']
-            st.dataframe(df[display_cols], use_container_width=True, hide_index=True)
+            col_exp1, col_exp2 = st.columns([1, 4])
+            with col_exp1:
+                if st.button("📥 Export Summary to Excel"):
+                    output = io.BytesIO()
+                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                        df.to_excel(writer, index=False)
+                    output.seek(0)
+                    st.download_button("⬇️ Download Summary", output, "portfolio_summary.xlsx", 
+                                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
             
-            if st.button("📥 Export Summary to Excel"):
-                output = io.BytesIO()
-                with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                    df[display_cols].to_excel(writer, index=False)
-                output.seek(0)
-                st.download_button("⬇️ Download Summary Report", output, "portfolio_summary.xlsx", 
-                                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            st.dataframe(df, use_container_width=True, hide_index=True)
 
 # ====================== MANAGE LOAN ======================
 with tab6:
-    st.subheader("Manage Loan - Edit / Freeze")
+    st.subheader("Manage Loan")
     manage_id = st.number_input("Loan ID", min_value=1, key="manage_id")
     
     col1, col2, col3 = st.columns(3)
     with col1:
-        if st.button("❄️ Freeze / Unfreeze Loan"):
+        if st.button("❄️ Freeze / Unfreeze"):
             c.execute("UPDATE loans SET frozen = NOT frozen WHERE id=?", (manage_id,))
             conn.commit()
-            st.success(f"Loan {manage_id} freeze status updated!")
+            st.success("Status updated!")
             st.rerun()
     with col2:
-        if st.button("🔒 Freeze Current Balance"):
+        if st.button("🔒 Freeze Balance"):
             loan = pd.read_sql_query("SELECT * FROM loans WHERE id=?", conn, params=(manage_id,))
             if not loan.empty:
-                current_balance = calculate_balance(loan.iloc[0]['total_repayment'], loan.iloc[0]['amount_paid'])
-                c.execute("UPDATE loans SET is_balance_frozen=1, frozen_balance=? WHERE id=?", (current_balance, manage_id))
+                bal = calculate_balance(loan.iloc[0]['total_repayment'], loan.iloc[0]['amount_paid'])
+                c.execute("UPDATE loans SET is_balance_frozen=1, frozen_balance=? WHERE id=?", (bal, manage_id))
                 conn.commit()
-                st.success(f"✅ Balance frozen at UGX {current_balance:,.0f}")
+                st.success(f"Balance frozen at UGX {bal:,.0f}")
                 st.rerun()
     with col3:
         if st.button("🔓 Unfreeze Balance"):
@@ -228,33 +237,51 @@ with tab6:
             st.success("Balance unfrozen!")
             st.rerun()
 
-    if st.button("✏️ Load Loan for Editing"):
+    st.divider()
+    st.subheader("➕ Top-up Loan")
+    topup_amount = st.number_input("Top-up Amount (UGX)", min_value=10000, value=50000, step=10000)
+    topup_months = st.number_input("Additional Months", min_value=1, value=1)
+    if st.button("Add Top-up", type="primary"):
+        loan = pd.read_sql_query("SELECT * FROM loans WHERE id=?", conn, params=(manage_id,))
+        if not loan.empty:
+            new_amount = loan.iloc[0]['amount'] + topup_amount
+            new_total = loan.iloc[0]['total_repayment'] + (topup_amount * (1 + (loan.iloc[0]['interest_rate']/100) * topup_months))
+            new_term = int(loan.iloc[0]['term_months']) + int(topup_months)
+            new_due = datetime.now().date() + timedelta(days=30 * new_term)
+            
+            c.execute("""UPDATE loans SET amount=?, total_repayment=?, term_months=?, due_date=? WHERE id=?""",
+                      (new_amount, new_total, new_term, str(new_due), manage_id))
+            conn.commit()
+            st.success(f"✅ Top-up added successfully!")
+            st.rerun()
+
+    st.divider()
+    if st.button("✏️ Load for Editing"):
         loan_data = pd.read_sql_query("SELECT * FROM loans WHERE id=?", conn, params=(manage_id,))
         if not loan_data.empty:
             st.session_state.edit_loan = loan_data.iloc[0].to_dict()
-            st.success("Loan loaded! Scroll down to edit.")
+            st.success("Loan loaded!")
 
     if 'edit_loan' in st.session_state:
         loan = st.session_state.edit_loan
-        st.write(f"**Editing Loan ID: {loan['id']} - {loan['borrower_name']}**")
+        st.write(f"**Editing: {loan['borrower_name']}**")
         col1, col2 = st.columns(2)
         with col1:
             new_name = st.text_input("Borrower Name", loan['borrower_name'])
-            new_phone = st.text_input("Phone Number", loan['phone'])
-            new_amount = st.number_input("Loan Amount", value=float(loan['amount']))
-            new_officer = st.text_input("Loan Officer", loan['loan_officer'])
+            new_phone = st.text_input("Phone", loan['phone'])
+            new_amount = st.number_input("Amount", value=float(loan['amount']))
+            new_officer = st.text_input("Officer", loan['loan_officer'])
         with col2:
-            new_rate = st.number_input("Interest Rate (%)", value=float(loan['interest_rate']))
-            new_months = st.number_input("Term (Months)", value=int(loan['term_months']))
+            new_rate = st.number_input("Rate (%)", value=float(loan['interest_rate']))
+            new_months = st.number_input("Months", value=int(loan['term_months']))
             new_disb = st.date_input("Disbursement Date", datetime.strptime(loan['disbursement_date'], '%Y-%m-%d').date())
             new_due = st.date_input("Due Date", datetime.strptime(loan['due_date'], '%Y-%m-%d').date())
-            new_frozen = st.checkbox("Loan Frozen", value=bool(loan.get('frozen', 0)))
+            new_frozen = st.checkbox("Frozen", value=bool(loan.get('frozen', 0)))
         
         if st.button("💾 Save Changes", type="primary"):
             new_total = new_amount * (1 + (new_rate / 100) * new_months)
-            c.execute("""UPDATE loans SET borrower_name=?, phone=?, amount=?, interest_rate=?, 
-                        term_months=?, total_repayment=?, disbursement_date=?, due_date=?, 
-                        loan_officer=?, frozen=? WHERE id=?""",
+            c.execute("""UPDATE loans SET borrower_name=?, phone=?, amount=?, interest_rate=?, term_months=?, 
+                        total_repayment=?, disbursement_date=?, due_date=?, loan_officer=?, frozen=? WHERE id=?""",
                       (new_name, new_phone, new_amount, new_rate, new_months, new_total, 
                        str(new_disb), str(new_due), new_officer, int(new_frozen), manage_id))
             conn.commit()
